@@ -5,7 +5,7 @@ from tkinter import filedialog
 from PIL import Image, ImageTk
 import os.path
 
-CONFIG_FILE = ".config"
+CONFIG_FILE = "{}/.config".format(os.path.dirname(os.path.realpath(__file__)))
 
 """
 Allows user to move mouse 1 pixel at a time with the arrow keys
