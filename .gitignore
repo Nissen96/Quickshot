@@ -1,6 +1,8 @@
 # IDE
 .idea/
 
+.config
+
 # Images
 *.png
 *.jpg
