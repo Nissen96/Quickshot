@@ -1,9 +1,10 @@
-import pyscreenshot as ImageGrab
-from pynput import mouse, keyboard
-import tkinter as tk
-from tkinter import filedialog
-from PIL import Image, ImageTk, ImageDraw
 import os.path
+import pyscreenshot as ImageGrab
+import tkinter as tk
+
+from PIL import Image, ImageTk, ImageDraw
+from pynput import mouse, keyboard
+from tkinter import filedialog
 
 CONFIG_FILE = "{}/.config".format(os.path.dirname(os.path.realpath(__file__)))
 
@@ -25,10 +26,12 @@ def on_press(key):
 
 
 def parent_dir(path):
+    # Get parent directory of a file in a safe way
     return os.path.abspath(os.path.join(path, os.pardir))
 
 
 def get_previous_path():
+    # Get cached file location of previously saved screenshot
     try:
         with open(CONFIG_FILE, "r") as f:
             return f.read()
@@ -37,24 +40,34 @@ def get_previous_path():
 
 
 def set_previous_path(path):
+    # Cache file location of saved screenshot
     with open(CONFIG_FILE, "w") as f:
         f.write(path)
 
 
+def order_coords(x1, y1, x2, y2):
+    return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+
+def get_anchor(x1, y1, x2, y2):
+    return ((tk.SE, tk.SW), (tk.NE, tk.NW))[y1 > y2][x1 > x2]
+
+
 class Lens:
     """
-    Class for zoom lens to set values and perform calculations only once
+    Lens for zooming in around mouse pointer
+    to easily see exactly which pixels are selected
     """
     def __init__(self, canvas):
         self.canvas = canvas
 
-        # Settings
+        # Settings for selection size, zoom scale and lens size
         self.selection_width = 10
         self.selection_height = 10
         self.scale = 15
         self.width = self.scale * self.selection_width
         self.height = self.scale * self.selection_height
-        self.lens_offset = 10
+        self.lens_offset = 10 + self.width / 2
 
         # Create circular mask to make lens circular
         self.mask = Image.new("L", (self.width, self.height))
@@ -65,12 +78,13 @@ class Lens:
         self.lens_img = None
 
     def draw_at(self, img, msx, msy):
+        # Initialize image and shapes and move to mouse pointer
         self.init()
         self.move_to(img, msx, msy)
 
     def init(self):
         # Initialize drawings - means they can just be moved at each mouse move
-        self.canvas.create_image(0, 0, image=self.lens_img, anchor=tk.NW, tag=("lens", "lensimg"))
+        self.canvas.create_image(0, 0, image=self.lens_img, anchor=tk.NW, tag="lensimg")
 
         # Imitate center lines on lens
         self.canvas.create_line(0, 0, 0, 0, width=2, fill="#adc0b5", tags=("lens", "hcln"))
@@ -82,7 +96,8 @@ class Lens:
         self.canvas.create_line(0, 0, 0, 0, width=4, tags=("lens", "bhln"))
         self.canvas.create_line(0, 0, 0, 0, width=4, tags=("lens", "bvln"))
 
-    def move_to(self, img, msx, msy):
+    def move_to(self, img, msx, msy, anchor=tk.SE):
+        # Crop screenshot around mouse
         cropped = img.crop((
             msx - self.selection_width / 2,
             msy - self.selection_height / 2,
@@ -90,7 +105,9 @@ class Lens:
             msy + self.selection_height / 2
         ))
 
-        zoomed = Image.new(cropped.mode, (self.width, self.height))
+        # Get each pixel in cropped image, and zoom each in
+        # by adding a larger block of each
+        # TODO - less ugly code
         pixels = []
         for y in range(self.selection_height):
             for _ in range(self.scale):
@@ -99,20 +116,27 @@ class Lens:
                     for _ in range(self.scale):
                         pixels.append(pixel)
 
+        # Create a zoomed in version of the cropped image and add circular mask
+        zoomed = Image.new(cropped.mode, (self.width, self.height))
         zoomed.putdata(pixels)
         zoomed.putalpha(self.mask)
 
+        xoffset = self.lens_offset if anchor in (tk.NE, tk.SE) else -self.lens_offset
+        yoffset = self.lens_offset if anchor in (tk.SW, tk.SE) else -self.lens_offset
+
+        # Replace previous zoomed lens image with new
         self.canvas.delete("lensimg")
         self.lens_img = ImageTk.PhotoImage(zoomed)
         self.canvas.create_image(
-            msx + self.lens_offset,
-            msy + self.lens_offset,
-            image=self.lens_img, anchor=tk.NW, tag="lensimg"
+            msx + xoffset,
+            msy + yoffset,
+            image=self.lens_img, tag="lensimg"
         )
 
-        xcenter = msx + self.width / 2 + self.lens_offset
-        ycenter = msy + self.height / 2 + self.lens_offset
+        xcenter = msx + xoffset
+        ycenter = msy + yoffset
 
+        # Update coordinate of each line
         self.canvas.coords("hcln", [xcenter - self.width / 2, ycenter, xcenter + self.width / 2, ycenter])
         self.canvas.coords("vcln", [xcenter, ycenter - self.height / 2, xcenter, ycenter + self.height / 2])
         self.canvas.coords("whln", [xcenter - 30, ycenter, xcenter + 30, ycenter])
@@ -120,6 +144,7 @@ class Lens:
         self.canvas.coords("bhln", [xcenter - 28, ycenter, xcenter + 28, ycenter])
         self.canvas.coords("bvln", [xcenter, ycenter - 28, xcenter, ycenter + 28])
 
+        # Image was replaced = added on top - raise moved lines on top of this
         self.canvas.tag_raise("lens")
 
     def remove(self):
@@ -149,22 +174,11 @@ class Quickshot:
         # ESCAPE = quit
         self.tk.bind("<Escape>", self.end)
 
-        # Mouse bindings for click, drag and release
+        # Mouse bindings for move, click, drag and release
         self.canvas.bind("<Motion>", self.on_motion)
         self.canvas.bind("<B1-Motion>", self.on_button_move)
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
-
-        # Initialize horizontal and vertical line at mouse pointer
-        msx, msy = self.tk.winfo_pointerxy()
-        self.hline = self.canvas.create_line(0, msy, self.screenwidth, msy, fill="#adc0b5", tag="line")
-        self.vline = self.canvas.create_line(msx, 0, msx, self.screenheight, fill="#adc0b5", tag="line")
-
-        self.lens = Lens(self.canvas)
-        self.lens.draw_at(self.screenshot, msx, msy)
-
-        self.x = self.y = 0
-        self.selection = None
 
         # Enable keyboard listener for moving mouse with arrow keys
         kbd = keyboard.Listener(
@@ -173,18 +187,38 @@ class Quickshot:
         )
         kbd.start()
 
+        # Initialize horizontal and vertical line at mouse pointer
+        msx, msy = self.tk.winfo_pointerxy()
+        self.hline = self.canvas.create_line(0, msy, self.screenwidth, msy, fill="#adc0b5", tag="line")
+        self.vline = self.canvas.create_line(msx, 0, msx, self.screenheight, fill="#adc0b5", tag="line")
+
+        # Draw zoom lens
+        self.lens = Lens(self.canvas)
+        self.lens.draw_at(self.screenshot, msx, msy)
+
+        self.x = self.y = 0
+        self.selection = None
+
     def draw_selection(self, x1, y1, x2, y2):
+        # Ensure coordinates are valid
+        x1, y1, x2, y2 = order_coords(x1, y1, x2, y2)
+
+        # Simulate a transparent rectangle with a transparent image
         fill = self.tk.winfo_rgb("#d8f0e2") + (100,)
         img = Image.new("RGBA", (x2-x1, y2-y1), fill)
         self.selection = ImageTk.PhotoImage(img)
         self.canvas.create_image(x1, y1, image=self.selection, anchor=tk.NW, tag="selection")
+
+        # Border
         self.canvas.create_rectangle(x1, y1, x2, y2, outline="#adc0b5", tag="selection")
 
     def on_motion(self, event):
-        # Update lens
-        self.lens.move_to(self.screenshot, event.x, event.y)
+        anchor = get_anchor(self.x, self.y, event.x, event.y)
 
-        # Update guiding lines
+        # Update lens
+        self.lens.move_to(self.screenshot, event.x, event.y, anchor=anchor)
+
+        # Update guidelines
         self.canvas.coords(self.hline, [0, event.y, self.screenwidth, event.y])
         self.canvas.coords(self.vline, [event.x, 0, event.x, self.screenheight])
 
@@ -194,7 +228,7 @@ class Quickshot:
         self.x = event.x
         self.y = event.y
 
-        # Initialize rectangle
+        # Show currently selected window
         self.draw_selection(event.x, event.y, event.x, event.y)
 
     def on_button_move(self, event):
@@ -202,17 +236,18 @@ class Quickshot:
         self.canvas.delete("selection")
         self.draw_selection(self.x, self.y, event.x, event.y)
 
-        # Continue moving lines
+        # Update lines
         self.on_motion(event)
 
     def on_button_release(self, event):
-        # Upon release, remove box and lines and screenshot selection
+        # Upon release, remove everything but the screenshot
         self.canvas.delete("selection")
         self.canvas.delete("line")
         self.lens.remove()
         self.canvas.update()
 
-        im = ImageGrab.grab(bbox=(self.x, self.y, event.x, event.y), backend="scrot")
+        # Create the actual screenshot of the selection
+        im = ImageGrab.grab(bbox=order_coords(self.x, self.y, event.x, event.y), backend="scrot")
 
         # Get filename from user
         path = filedialog.asksaveasfilename(
@@ -228,6 +263,7 @@ class Quickshot:
             set_previous_path(parent_dir(path))
             self.end()
         else:
+            # If cancel pressed, redraw lens and keep running
             msx, msy = self.tk.winfo_pointerxy()
             self.lens.draw_at(self.screenshot, msx, msy)
 
