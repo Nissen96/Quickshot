@@ -163,7 +163,7 @@ class Quickshot:
         self.screenheight = self.tk.winfo_screenheight()
 
         # Take a screenshot of the current screen
-        self.screenshot = ImageGrab.grab(backend="scrot")
+        self.screenshot = ImageGrab.grab()
         self.screenshotimg = ImageTk.PhotoImage(self.screenshot)
 
         # Fill the window with a canvas with the screenshot
@@ -247,7 +247,7 @@ class Quickshot:
         self.canvas.update()
 
         # Create the actual screenshot of the selection
-        im = ImageGrab.grab(bbox=order_coords(self.x, self.y, event.x, event.y), backend="scrot")
+        im = ImageGrab.grab(bbox=order_coords(self.x, self.y, event.x, event.y))
 
         # Get filename from user
         path = filedialog.asksaveasfilename(
