@@ -1,3 +1,4 @@
+import numpy as np
 import os.path
 import pyscreenshot as ImageGrab
 import tkinter as tk
@@ -53,6 +54,12 @@ def get_anchor(x1, y1, x2, y2):
     return ((tk.SE, tk.SW), (tk.NE, tk.NW))[y1 > y2][x1 > x2]
 
 
+def broadcast_tile(arr, tile):
+    return np.broadcast_to(
+        arr.reshape(arr.size, 1, 1, 1), (arr.size, tile, 1, tile)
+    ).reshape(arr.size * tile, tile)
+
+
 class Lens:
     """
     Lens for zooming in around mouse pointer
@@ -97,28 +104,18 @@ class Lens:
         self.canvas.create_line(0, 0, 0, 0, width=4, tags=("lens", "bvln"))
 
     def move_to(self, img, msx, msy, anchor=tk.SE):
-        # Crop screenshot around mouse
-        cropped = img.crop((
-            msx - self.selection_width / 2,
-            msy - self.selection_height / 2,
-            msx + self.selection_height / 2,
-            msy + self.selection_height / 2
-        ))
-
-        # Get each pixel in cropped image, and zoom each in
-        # by adding a larger block of each
-        # TODO - less ugly code
-        pixels = []
-        for y in range(self.selection_height):
-            for _ in range(self.scale):
-                for x in range(self.selection_width):
-                    pixel = cropped.getpixel((x, y))
-                    for _ in range(self.scale):
-                        pixels.append(pixel)
+        # Get cropped image around mouse and zoom in by creating a block of each pixel
+        cropped_pixels = np.array([
+            img.getpixel((x, y))
+            for x in range(msx - self.selection_width // 2, msx + self.selection_width // 2)
+            for y in range(msy - self.selection_height // 2, msy + self.selection_height // 2)
+        ], dtype="i,i,i")
+        pixel_map = [*map(tuple, broadcast_tile(cropped_pixels, self.scale).flatten('K'))]
+        print(pixel_map)
 
         # Create a zoomed in version of the cropped image and add circular mask
-        zoomed = Image.new(cropped.mode, (self.width, self.height))
-        zoomed.putdata(pixels)
+        zoomed = Image.new(img.mode, (self.width, self.height))
+        zoomed.putdata(pixel_map)
         zoomed.putalpha(self.mask)
 
         xoffset = self.lens_offset if anchor in (tk.NE, tk.SE) else -self.lens_offset
