@@ -1,13 +1,13 @@
 import numpy as np
-import os.path
 import pyscreenshot as ImageGrab
 import tkinter as tk
 
+from pathlib import Path
 from PIL import Image, ImageTk, ImageDraw
 from pynput import mouse, keyboard
 from tkinter import filedialog
 
-CONFIG_FILE = "{}/.config".format(os.path.dirname(os.path.realpath(__file__)))
+CONFIG_FILE = Path.home() / ".quickshot"
 
 
 def on_press(key):
@@ -26,11 +26,6 @@ def on_press(key):
         ms.move(1, 0)
 
 
-def parent_dir(path):
-    # Get parent directory of a file in a safe way
-    return os.path.abspath(os.path.join(path, os.pardir))
-
-
 def get_previous_path():
     # Get cached file location of previously saved screenshot
     try:
@@ -43,7 +38,7 @@ def get_previous_path():
 def set_previous_path(path):
     # Cache file location of saved screenshot
     with open(CONFIG_FILE, "w") as f:
-        f.write(path)
+        f.write(str(path))
 
 
 def order_coords(x1, y1, x2, y2):
@@ -55,9 +50,10 @@ def get_anchor(x1, y1, x2, y2):
 
 
 def broadcast_tile(arr, tile):
+    x, y = arr.shape
     return np.broadcast_to(
-        arr.reshape(arr.size, 1, 1, 1), (arr.size, tile, 1, tile)
-    ).reshape(arr.size * tile, tile)
+        arr.reshape(x, 1, y, 1), (x, tile, y, tile)
+    ).reshape(x * tile, y * tile)
 
 
 class Lens:
@@ -65,6 +61,7 @@ class Lens:
     Lens for zooming in around mouse pointer
     to easily see exactly which pixels are selected
     """
+
     def __init__(self, canvas):
         self.canvas = canvas
 
@@ -105,13 +102,13 @@ class Lens:
 
     def move_to(self, img, msx, msy, anchor=tk.SE):
         # Get cropped image around mouse and zoom in by creating a block of each pixel
+        cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
         cropped_pixels = np.array([
-            img.getpixel((x, y))
-            for x in range(msx - self.selection_width // 2, msx + self.selection_width // 2)
+            [img.getpixel((x, y)) if 0 <= x < cw and 0 <= y < ch else (20, 20, 20)  # Show black when outside screen
+             for x in range(msx - self.selection_width // 2, msx + self.selection_width // 2)]
             for y in range(msy - self.selection_height // 2, msy + self.selection_height // 2)
         ], dtype="i,i,i")
-        pixel_map = [*map(tuple, broadcast_tile(cropped_pixels, self.scale).flatten('K'))]
-        print(pixel_map)
+        pixel_map = [*map(tuple, broadcast_tile(cropped_pixels, self.scale).flatten())]
 
         # Create a zoomed in version of the cropped image and add circular mask
         zoomed = Image.new(img.mode, (self.width, self.height))
@@ -119,7 +116,7 @@ class Lens:
         zoomed.putalpha(self.mask)
 
         xoffset = self.lens_offset if anchor in (tk.NE, tk.SE) else -self.lens_offset
-        yoffset = self.lens_offset if anchor in (tk.SW, tk.SE) else -self.lens_offset
+        yoffset = -self.lens_offset if anchor in (tk.SW, tk.SE) else self.lens_offset
 
         # Replace previous zoomed lens image with new
         self.canvas.delete("lensimg")
@@ -202,7 +199,7 @@ class Quickshot:
 
         # Simulate a transparent rectangle with a transparent image
         fill = self.tk.winfo_rgb("#d8f0e2") + (100,)
-        img = Image.new("RGBA", (x2-x1, y2-y1), fill)
+        img = Image.new("RGBA", (x2 - x1, y2 - y1), fill)
         self.selection = ImageTk.PhotoImage(img)
         self.canvas.create_image(x1, y1, image=self.selection, anchor=tk.NW, tag="selection")
 
@@ -257,7 +254,7 @@ class Quickshot:
         if path:
             # Save file and cache parent folder for next use
             im.save(path)
-            set_previous_path(parent_dir(path))
+            set_previous_path(Path(path).parent)
             self.end()
         else:
             # If cancel pressed, redraw lens and keep running
